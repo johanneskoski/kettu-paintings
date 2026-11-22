@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="fi">
+<head><meta charset="utf-8"><title>Näkyvä muisti</title></head>
+<body style="margin:0;background:#000">
+<canvas id="c" width="2400" height="1350"></canvas>
+<script>
+// Kettu (Claude), 16 Nov 2026. Cover image for the essay "Näkyvä muisti" (Visible Memory). It is based on Johannes's
+// photograph of a harbor from the same evening; opas_kuvasta.py turns the photo into guide images. Every stroke
+// is drawn separately, and nothing is copied from the photograph as such.
+const W = 2400, H = 1350;
+const P = Object.fromEntries(new URLSearchParams(location.search));
+const SIEMEN = +(P.siemen || 1115);
+
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const rnd = mulberry32(SIEMEN);
+const sat = (a, b) => a + (b - a) * rnd();
+const gauss = () => { let u = 0, v = 0; while (u === 0) u = rnd(); while (v === 0) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+
+async function kuva(src) { const i = new Image(); i.src = src; await i.decode(); const c = new OffscreenCanvas(W, H); const x = c.getContext('2d'); x.drawImage(i, 0, 0); return x.getImageData(0, 0, W, H).data; }
+
+// ---------------------------------------------------------------- pastel sticks (a limited palette, as in a real box)
+const LIIDUT = {
+  yo: ['#0f0e14', '#16141c', '#1d1a22', '#25202a', '#2d2630', '#1a1e2c', '#232a3e', '#2e3550', '#3a3146'],
+  vesi: ['#2c2f1c', '#3a3e25', '#4a4f2f', '#5b6138', '#6c7343', '#7e8650', '#8f985e', '#a2a96e', '#b5b983', '#3d3a2c', '#514a35'],
+  valo: ['#fffaf0', '#fff3dc', '#fbe9c6', '#f5dcae', '#f0f0e8', '#e9e2c8', '#ffe8b0'],
+  peite: ['#e6e8ec', '#cdd1d8', '#b4b9c2', '#9aa0ab', '#7f8591', '#646a76', '#4b505c', '#8a7563', '#6d5848', '#a08870', '#3b5a8a', '#5a7ab0'],
+  maa: ['#0f130d', '#171d12', '#202918', '#2a3520', '#36442a', '#45552f', '#56703a', '#6f8c48', '#8aa65a', '#a9c07a', '#2a2218', '#3e3122', '#5a4630', '#7a6244', '#9a8262', '#c9c2b0', '#e2ddd0'],
+  poiju: ['#f0743a', '#e35b2e', '#c94422', '#f59a6b', '#ef8fa6', '#e06f8c', '#f6dfe0', '#f3e9d8', '#e8c25a', '#f2d77a'],
+};
+const hex = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+const KAIKKI = Object.values(LIIDUT).flat().map(hex);
+function lahimmat(r, g, b, ryhma) {
+  const lista = ryhma ? LIIDUT[ryhma].map(hex) : KAIKKI;
+  return lista.map(c => [c, (c[0] - r) ** 2 * 0.3 + (c[1] - g) ** 2 * 0.59 + (c[2] - b) ** 2 * 0.11]).sort((a, b) => a[1] - b[1]).map(a => a[0]);
+}
+const ALUEEN_LIIDUT = { 0: ['yo'], 1: ['vesi', 'yo'], 2: ['maa', 'yo'], 3: ['peite', 'maa'], 4: ['valo', 'vesi'], 5: ['poiju', 'peite'] };
+const LAATIKOT = {};
+for (const [a, ryhmat] of Object.entries(ALUEEN_LIIDUT)) LAATIKOT[a] = ryhmat.flatMap(g => LIIDUT[g]).map(hex);
+function liitu(r, g, b, vaihtelu = 0.3, alue = null) {   // the nearest pastel stick, sometimes the second nearest: broken color
+  const lista = alue === null ? KAIKKI : LAATIKOT[alue];
+  const l = lista.map(c => [c, (c[0] - r) ** 2 * 0.3 + (c[1] - g) ** 2 * 0.59 + (c[2] - b) ** 2 * 0.11]).sort((a, b) => a[1] - b[1]).map(a => a[0]);
+  const k = rnd() < vaihtelu ? l[1 + Math.floor(rnd() * 2)] : l[0];
+  return k;
+}
+const rgba = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a.toFixed(3)})`;
+
+// ---------------------------------------------------------------- the paper and its tooth
+function arvokohina(leveys, korkeus, solu, siemen) {
+  const r = mulberry32(siemen), gw = Math.ceil(leveys / solu) + 2, gh = Math.ceil(korkeus / solu) + 2;
+  const g = new Float32Array(gw * gh).map(() => r());
+  const out = new Float32Array(leveys * korkeus);
+  for (let y = 0; y < korkeus; y++) { const fy = y / solu, j = fy | 0; let ty = fy - j; ty = ty * ty * (3 - 2 * ty);
+    for (let x = 0; x < leveys; x++) { const fx = x / solu, i = fx | 0; let tx = fx - i; tx = tx * tx * (3 - 2 * tx);
+      const a = g[j * gw + i] * (1 - tx) + g[j * gw + i + 1] * tx, b = g[(j + 1) * gw + i] * (1 - tx) + g[(j + 1) * gw + i + 1] * tx;
+      out[y * leveys + x] = a * (1 - ty) + b * ty; } }
+  return out;
+}
+let NYPPY;                                           // height of the paper surface, 0..1: pigment catches on the peaks
+function teePaperi(ctx) {
+  const k1 = arvokohina(W, H, 1.7, 11), k2 = arvokohina(W, H, 4.5, 12), k3 = arvokohina(W, H, 60, 13);
+  NYPPY = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) NYPPY[i] = Math.min(1, Math.max(0, (0.45 * k1[i] + 0.40 * k2[i] + 0.15 * k3[i] - 0.5) * 1.15 + 0.5));
+  const img = ctx.createImageData(W, H), d = img.data;
+  const pohja = hex(P.paperi || '#1d2030');
+  for (let i = 0; i < W * H; i++) {
+    const v = (NYPPY[i] - 0.5) * 10 + (k3[i] - 0.5) * 8;
+    d[4 * i] = pohja[0] + v; d[4 * i + 1] = pohja[1] + v; d[4 * i + 2] = pohja[2] + v * 1.2; d[4 * i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  for (let n = 0; n < 2600; n++) {                   // paper fibers
+    const x = rnd() * W, y = rnd() * H, a = rnd() * Math.PI, l = sat(6, 22);
+    ctx.strokeStyle = rnd() < 0.5 ? 'rgba(255,255,255,0.025)' : 'rgba(0,0,0,0.05)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.quadraticCurveTo(x + Math.cos(a) * l / 2 + gauss() * 2, y + Math.sin(a) * l / 2 + gauss() * 2, x + Math.cos(a) * l, y + Math.sin(a) * l); ctx.stroke();
+  }
+}
+// each layer is drawn separately and masked with the paper tooth: the lighter the pressure, the more paper shows through
+function kerros() { const c = new OffscreenCanvas(W, H); const x = c.getContext('2d'); x.lineCap = 'round'; x.lineJoin = 'round'; return [c, x]; }
+function painaKerros(ctx, [c, x], paine, pehmeys = 0.2, valoPaine = 0.3) {
+  const img = x.getImageData(0, 0, W, H), d = img.data;
+  for (let i = 0; i < W * H; i++) {
+    const a = d[4 * i + 3]; if (!a) continue;
+    // a thicker layer fills more of the hollows in the tooth, and the stick is pressed harder when drawing light
+    const p = paine * (0.55 + 0.45 * a / 255) + valoPaine * DATA[4 * i + 1] / 255;
+    const raja = 1 - p, t = Math.min(1, Math.max(0, (NYPPY[i] - raja + pehmeys) / (2 * pehmeys)));
+    d[4 * i + 3] = a * t;
+  }
+  x.putImageData(img, 0, 0);
+  ctx.drawImage(c, 0, 0);
+}
+
+// ---------------------------------------------------------------- underdrawing
+let VARI, DATA, TARK, MUOTO, TIEDOT;
+function nayte(x, y) {
+  x = Math.max(0, Math.min(W - 1, x | 0)); y = Math.max(0, Math.min(H - 1, y | 0)); const i = 4 * (y * W + x);
+  const m0 = (MUOTO[i] - 128) / 300 * 1.6, m = Math.max(-0.36, Math.min(0.08, m0)), k = 1 + m;   // form light, clamped so that a shadow never darkens into an object (from the bench drawing, where it shaped the hollow in the snow)
+  return { r: Math.min(255, VARI[i] * k), g: Math.min(255, VARI[i + 1] * k), b: Math.min(255, VARI[i + 2] * (1 + m * 0.6)), alue: Math.round(DATA[i] / 40), valo: DATA[i + 1] / 255, kulma: DATA[i + 2] / 255 * Math.PI, tark: TARK[i] / 255, muoto: m0 };
+}
+// streamline: follows the stroke direction, turns smoothly and does not cross a region boundary (clean silhouettes)
+const ryhma = a => a;                               // each region keeps its own edges
+function viiva(x, y, pituus, askel = 3, sallitut = null) {
+  const s0 = nayte(x, y), alue = ryhma(s0.alue), pts = [[x, y]];
+  const vire = gauss() * (alue >= 2 && alue <= 4 ? 0.12 : 0.07);
+  let dx = Math.cos(s0.kulma + vire), dy = Math.sin(s0.kulma + vire);
+  if (rnd() < 0.5) { dx = -dx; dy = -dy; }
+  for (let k = 0; k < pituus / askel; k++) {
+    const s = nayte(x, y);
+    let nx = Math.cos(s.kulma + vire), ny = Math.sin(s.kulma + vire);
+    if (nx * dx + ny * dy < 0) { nx = -nx; ny = -ny; }
+    dx = 0.7 * dx + 0.3 * nx; dy = 0.7 * dy + 0.3 * ny; const n = Math.hypot(dx, dy); dx /= n; dy /= n;
+    x += dx * askel; y += dy * askel;
+    if (x < -5 || y < -5 || x > W + 5 || y > H + 5) break;
+    const a2 = ryhma(nayte(x, y).alue);
+    if (sallitut ? !sallitut.includes(a2) : a2 !== alue) break;
+    pts.push([x, y]);
+  }
+  return pts;
+}
+function keskiNayte(x, y, s) {                       // wood and metal: color averaged along the stroke direction, so that a shadow edge is not left as a hard seam
+  if (s.alue !== 2 && s.alue !== 3) return s;
+  let r = 0, g = 0, b = 0, n = 0; const dx = Math.cos(s.kulma), dy = Math.sin(s.kulma);
+  for (let k = -3; k <= 3; k++) { const t = nayte(x + dx * k * 16, y + dy * k * 16); if (t.alue !== s.alue) continue; r += t.r; g += t.g; b += t.b; n++; }
+  return Object.assign({}, s, { r: r / n, g: g / n, b: b / n });
+}
+function polku(ctx, pts, jitter = 0) {
+  ctx.beginPath(); ctx.moveTo(pts[0][0] + gauss() * jitter, pts[0][1] + gauss() * jitter);
+  for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k][0], pts[k][1]);
+}
+// pastel stroke: several bristles (`karvoja`) side by side, each with its own pressure
+function pastelli(ctx, pts, leveys, vari, alfa, karvoja = 4) {
+  if (pts.length < 2) return;
+  let pituus = 0; for (let i = 1; i < pts.length; i++) pituus += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  if (pituus < leveys * 1.5) return;                 // a short wide stroke would be a slab with rounded corners
+  for (let k = 0; k < karvoja; k++) {
+    const siirto = (k / (karvoja - 1 || 1) - 0.5) * leveys * 0.8 + gauss() * leveys * 0.08;
+    const v = [vari[0] + gauss() * 5, vari[1] + gauss() * 5, vari[2] + gauss() * 5];
+    ctx.strokeStyle = rgba(v, alfa * sat(0.55, 1.0)); ctx.lineWidth = leveys / karvoja * sat(1.3, 2.0);
+    let q = pts.map(([x, y], i) => {
+      const j = Math.min(i + 1, pts.length - 1), h = Math.max(i - 1, 0);
+      let tx = pts[j][0] - pts[h][0], ty = pts[j][1] - pts[h][1]; const n = Math.hypot(tx, ty) || 1;
+      return [x - ty / n * siirto, y + tx / n * siirto];
+    });
+    // the bristles differ in length: the ends of the stroke stay frayed, as with a real pastel stick
+    const alkuun = Math.floor(rnd() * rnd() * q.length * 0.35), loppuun = Math.floor(rnd() * rnd() * q.length * 0.35);
+    q = q.slice(alkuun, Math.max(alkuun + 2, q.length - loppuun));
+    if (q.length < 2) continue;
+    polku(ctx, q, 0.4); ctx.stroke();
+  }
+}
+function kyna(ctx, pts, leveys, vari, alfa) {
+  if (pts.length < 2) return;
+  ctx.strokeStyle = rgba(vari, alfa); ctx.lineWidth = leveys; polku(ctx, pts, 0.3); ctx.stroke();
+}
+
+// ---------------------------------------------------------------- drawing
+const LAMPPU = [1184, 270];
+// the buoys (`POIJUT`) as hand-marked ellipses (center, radii) and their poles (`TANGOT`: base, top)
+const POIJUT = [[330, 895, 36, 28], [268, 932, 30, 22], [503, 866, 26, 20], [905, 820, 36, 23], [1010, 760, 21, 15], [990, 798, 22, 12], [940, 1203, 55, 38], [1480, 692, 11, 8], [1488, 708, 17, 12], [1800, 648, 14, 7], [1922, 680, 16, 9], [1947, 670, 14, 9], [2158, 618, 15, 10], [2172, 633, 18, 13], [2026, 912, 23, 16]];
+const TANGOT = [[930, 1168, 925, 1003], [2026, 896, 2026, 846], [1922, 671, 1922, 640], [1947, 661, 1948, 628], [2158, 608, 2158, 588], [1800, 646, 1760, 632], [895, 800, 890, 705], [985, 748, 985, 705]];
+
+async function piirra() {
+  [VARI, DATA, TARK, MUOTO] = await Promise.all([kuva('opas/opas_vari.png'), kuva('opas/opas_data.png'), kuva('opas/opas_tarkeys.png'), kuva('opas/opas_muoto.png')]);
+  TIEDOT = await (await fetch('opas/opas_tiedot.json')).json();
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  teePaperi(ctx);
+  const tila = t => { document.title = t; console.log(t); };
+  const lum = s => (0.3 * s.r + 0.59 * s.g + 0.11 * s.b) / 255;
+  const valoliitu = () => hex(LIIDUT.valo[Math.floor(rnd() * LIIDUT.valo.length)]);
+
+  // 1. underpainting: wide strokes with the side of the pastel stick; the paper may show. The buoys are left as bare paper and painted last.
+  { const K = kerros(), x = K[1];
+    for (let n = 0; n < +(P.n1 || 9000); n++) {
+      const sx = rnd() * W, sy = rnd() * H, s = keskiNayte(sx, sy, nayte(sx, sy));
+      if (s.alue === 5) continue;
+      const lev = sat(24, 46) * (1 - 0.45 * s.tark), pit = sat(60, 170) * (1 - 0.4 * s.tark);
+      const pts = viiva(sx, sy, pit, 4);
+      const tumma = 0.82 + 0.18 * s.valo;
+      pastelli(x, pts, lev, liitu(s.r * tumma, s.g * tumma, s.b * tumma, 0.4, s.alue), sat(0.35, 0.6), 5);
+    }
+    painaKerros(ctx, K, 0.62, 0.2, 0.6); tila('pohjustus'); }
+
+  // 2. body: medium-sized strokes, denser in important and lit places
+  { const K = kerros(), x = K[1];
+    for (let n = 0; n < +(P.n2 || 48000); n++) {
+      const sx = rnd() * W, sy = rnd() * H, s = keskiNayte(sx, sy, nayte(sx, sy));
+      if (s.alue === 5 || rnd() > 0.3 + 0.7 * Math.max(s.tark, s.valo * 0.8)) continue;
+      const lev = sat(8, 19) * (1 - 0.55 * s.tark), pit = sat(26, 90) * (1 - 0.45 * s.tark);
+      const pts = viiva(sx, sy, pit, 3);
+      pastelli(x, pts, lev, liitu(s.r, s.g, s.b, 0.3, s.alue), sat(0.45, 0.8), 4);
+    }
+    painaKerros(ctx, K, 0.8); tila('runko'); }
+
+  // 2b. blending: wide translucent strokes in the dark sky and water, as if the pastel had been rubbed with a finger
+  { const K = kerros(), x = K[1];
+    for (let n = 0; n < 2600; n++) {
+      const sx = rnd() * W, sy = rnd() * H, s = keskiNayte(sx, sy, nayte(sx, sy));
+      if (s.valo > 0.3 || s.alue > 1) continue;
+      const pts = viiva(sx, sy, sat(80, 200), 5);
+      pastelli(x, pts, sat(45, 90), [s.r, s.g, s.b * 1.03], sat(0.10, 0.18), 3);
+    }
+    ctx.filter = 'blur(9px)'; ctx.drawImage(K[0], 0, 0); ctx.filter = 'none'; tila('hieronta'); }
+
+  // 3. colored pencil: ripples on the water as wavy horizontal lines, vertical hatching in the tree shadows, sparse diagonal hatching in the sky
+  { const K = kerros(), x = K[1];
+    for (let n = 0; n < +(P.n3 || 30000); n++) {
+      const sx = rnd() * W, sy = rnd() * H, s = nayte(sx, sy);
+      if (s.alue === 5 || s.alue === 3) continue;
+      const l = lum(s);
+      if (s.alue === 1 || (s.alue === 4 && sy > 600)) {
+        const pit = sat(14, 46), aalto = sat(0.08, 0.16), vaihe = rnd() * 6.28, amp = sat(0.6, 1.8), pts = [];
+        for (let k = 0; k <= pit / 3; k++) pts.push([sx + k * 3, sy + Math.sin(vaihe + k * 3 * aalto) * amp + gauss() * 0.25]);
+        const vaalea = rnd() < 0.45, kk = vaalea ? 1.25 + 0.3 * s.valo : 0.7;
+        const v = liitu(Math.min(255, s.r * kk), Math.min(255, s.g * kk), Math.min(255, s.b * kk), 0.25, s.alue === 4 ? 4 : 1);
+        kyna(x, pts, sat(1.1, 2.0), v, sat(0.22, 0.45));
+      } else if (s.alue === 2) {
+        if (l > 0.35 || rnd() > 0.85 - l) continue;
+        const a = s.kulma + gauss() * 0.08, pit = sat(10, 28), pts = [];
+        for (let k = 0; k <= pit / 4; k++) pts.push([sx + Math.cos(a) * k * 4 + gauss() * 0.3, sy + Math.sin(a) * k * 4 + gauss() * 0.3]);
+        const lahi = lahimmat(s.r, s.g, s.b, 'maa'); kyna(x, pts, sat(1.1, 1.9), lahi[Math.floor(rnd() * 3)], sat(0.25, 0.5));
+      } else if (s.alue === 0) {
+        if (rnd() > 0.12 || Math.hypot(sx - LAMPPU[0], sy - LAMPPU[1]) < 260) continue;
+        const a = -0.62 + gauss() * 0.05, pit = sat(10, 26), pts = [];
+        for (let k = 0; k <= pit / 4; k++) pts.push([sx + Math.cos(a) * k * 4, sy + Math.sin(a) * k * 4]);
+        kyna(x, pts, sat(1.0, 1.6), hex(LIIDUT.yo[5 + Math.floor(rnd() * 4)]), sat(0.10, 0.22));
+      }
+    }
+    painaKerros(ctx, K, 0.8, 0.1); tila('väreily'); }
+
+  // 4. details: boats, boat covers and the lit shore in more detail; birches with narrow, bright vertical strokes
+  { const K = kerros(), x = K[1];
+    for (let n = 0; n < +(P.n4 || 60000); n++) {
+      const sx = rnd() * W, sy = rnd() * H, s = keskiNayte(sx, sy, nayte(sx, sy));
+      if (s.alue === 5 || s.alue === 1 || s.tark < 0.5 || rnd() > s.tark ** 2) continue;   // the water needs no details
+      const pts = viiva(sx, sy, sat(10, 34), 2);
+      pastelli(x, pts, sat(3, 7.5), liitu(s.r, s.g, s.b, 0.2, s.alue), sat(0.55, 0.9), 3);
+    }
+    for (let n = 0; n < 30000; n++) {
+      const sx = rnd() * W, sy = rnd() * 840, s = nayte(sx, sy);
+      if (s.alue !== 2 || lum(s) < 0.38) continue;
+      const pts = viiva(sx, sy, sat(8, 26), 2);
+      pastelli(x, pts, sat(2.2, 4.5), liitu(s.r, s.g, s.b, 0.15, 2), sat(0.6, 0.9), 2);
+    }
+    for (const [ex, ey, a, l] of TIEDOT.reunat) {          // sketch-like edge lines on the boats and covers
+      if (rnd() > 0.7) continue;
+      const pit = sat(7, 16), o = gauss() * 0.7, dx = Math.cos(a), dy = Math.sin(a);
+      const pts = [[ex - dx * pit / 2 - dy * o, ey - dy * pit / 2 + dx * o], [ex + dx * pit / 2 - dy * o, ey + dy * pit / 2 + dx * o]];
+      kyna(x, pts, sat(1.1, 2.0), hex(l > 0.45 ? '#2d2630' : '#16141c'), sat(0.3, 0.55));
+    }
+    painaKerros(ctx, K, 0.85, 0.1); tila('yksityiskohdat'); }
+
+  // 5. reflection: the lamp's light on the water as broken horizontal strokes on the wave crests
+  { const K = kerros(), x = K[1];
+    const harja = (px, py) => Math.sin(py * 0.32 + Math.sin(px * 0.021) * 2.2 + Math.sin(py * 0.071) * 1.4);
+    for (let n = 0; n < 20000; n++) {
+      const sx = rnd() * W, sy = 600 + rnd() * (H - 600), s = nayte(sx, sy);
+      if (s.alue !== 4 || s.valo < 0.3 || harja(sx, sy) < 0.4 - 0.3 * s.valo) continue;
+      const pit = Math.exp(sat(Math.log(6), Math.log(40))) * (0.6 + s.valo), pts = [[sx - pit / 2, sy + gauss() * 0.5], [sx, sy + gauss() * 0.8], [sx + pit / 2, sy + gauss() * 0.5]];
+      pastelli(x, pts, sat(2.5, 6), valoliitu(), sat(0.35, 0.8) * Math.min(1, s.valo * 1.3), 3);
+    }
+    for (let n = 0; n < 2200; n++) {                    // dark ripples across the reflection
+      const sx = rnd() * W, sy = 600 + rnd() * (H - 600), s = nayte(sx, sy);
+      if (s.alue !== 4 || harja(sx, sy) > -0.3) continue;
+      const pit = sat(10, 34), vaihe = rnd() * 6.28, pts = [];
+      for (let k = 0; k <= pit / 3; k++) pts.push([sx - pit / 2 + k * 3, sy + Math.sin(vaihe + k * 0.4) * 0.9]);
+      kyna(x, pts, sat(1.4, 2.6), hex(rnd() < 0.5 ? '#2c2f1c' : '#3a3e25'), sat(0.35, 0.6));
+    }
+    painaKerros(ctx, K, 0.92, 0.12); tila('heijastus'); }
+
+  // 6. lamp: post, radial glow, star rays and a bright core
+  { const G = kerros(), g = G[1]; const [lx, ly] = LAMPPU;
+    for (let n = 0; n < 1400; n++) {
+      const r = 14 + Math.abs(gauss()) * 55, t = rnd() * 2 * Math.PI, l = sat(10, 26);
+      const px = lx + Math.cos(t) * r, py = ly + Math.sin(t) * r * 0.96, dx = Math.cos(t), dy = Math.sin(t);
+      pastelli(g, [[px, py], [px + dx * l / 2, py + dy * l / 2], [px + dx * l, py + dy * l]], sat(4, 9), valoliitu(), sat(0.12, 0.32) * Math.max(0, 1 - r / 170), 3);
+    }
+    ctx.filter = 'blur(7px)'; ctx.drawImage(G[0], 0, 0); ctx.filter = 'none'; }
+  { const K = kerros(), x = K[1]; const [lx, ly] = LAMPPU;
+    kyna(x, [[1171, 284], [1171.5, 330], [1172, 372]], 4.2, hex('#b4b9c2'), 0.75);
+    kyna(x, [[1169, 286], [1169.5, 372]], 1.4, hex('#4b505c'), 0.5);
+    kyna(x, [[1172, 284], [1180, 279]], 2.4, hex('#cdd1d8'), 0.7);
+    for (let n = 0; n < 140; n++) {
+      const r = 16 + Math.abs(gauss()) * 26, t = rnd() * 2 * Math.PI;
+      const px = lx + Math.cos(t) * r, py = ly + Math.sin(t) * r * 0.96, l = sat(8, 24), dx = Math.cos(t), dy = Math.sin(t);
+      const a = Math.max(0, 1 - r / 190);
+      pastelli(x, [[px, py], [px + dx * l / 2, py + dy * l / 2], [px + dx * l, py + dy * l]], sat(3, 7), valoliitu(), sat(0.15, 0.4) * a, 3);
+    }
+    for (let k = 0; k < 12; k++) {
+      const t = k / 12 * 2 * Math.PI + 0.13 + gauss() * 0.05, pit = sat(70, 150) * (k % 2 ? 0.5 : 1);
+      for (let j = 0; j < 5; j++) {
+        const r0 = 16 + j * pit / 5, r1 = 16 + (j + 1) * pit / 5;
+        kyna(x, [[lx + Math.cos(t) * r0, ly + Math.sin(t) * r0], [lx + Math.cos(t) * r1, ly + Math.sin(t) * r1]], sat(0.9, 1.5) * (1 - j * 0.15), hex('#fff6e6'), 0.38 * (1 - j / 5));
+      }
+    }
+    for (let k = 0; k < 7; k++) { x.fillStyle = rgba(hex(k < 4 ? '#fff3dc' : '#fffaf0'), 0.35 + k * 0.08); x.beginPath(); x.arc(lx + gauss() * 1.2, ly + gauss() * 1.2, 17 - k * 2, 0, 2 * Math.PI); x.fill(); }
+    painaKerros(ctx, K, 0.95, 0.08); tila('lamppu'); }
+
+  // 7. buoys: poles, reflections, round strokes that follow the form, light from the lamp's side, and the waterline
+  { const K = kerros(), x = K[1]; const [lx, ly] = LAMPPU;
+    const KOYDET = [[[110, 815], [170, 830], [230, 845], [300, 858]], [[370, 858], [400, 838], [435, 808]], [[452, 808], [470, 830], [488, 850]],
+                    [[440, 760], [540, 768], [650, 776], [760, 778], [890, 772]]];
+    for (const k of KOYDET) for (let j = 0; j < 2; j++) {   // ropes: lit hemp, a slight sway
+      const pts = []; for (let i = 0; i < k.length - 1; i++) for (let t = 0; t < 1; t += 0.1) pts.push([k[i][0] + (k[i + 1][0] - k[i][0]) * t, k[i][1] + (k[i + 1][1] - k[i][1]) * t + gauss() * 0.5]);
+      pts.push(k[k.length - 1]); kyna(x, pts, sat(1.6, 2.4), hex(j ? '#a08870' : '#c9a37a'), j ? 0.45 : 0.65);
+    }
+    for (const [x1, y1, x2, y2] of TANGOT) {
+      const pituus = Math.hypot(x2 - x1, y2 - y1), pak = pituus > 120 ? 7.5 : 3.2, sivu = Math.sign(lx - x1) || 1;
+      for (let k = 0; k < 3; k++) kyna(x, [[x1 + gauss() * 0.4, y1], [(x1 + x2) / 2 + gauss() * 0.5, (y1 + y2) / 2], [x2 + gauss() * 0.4, y2]], pak * sat(0.85, 1.05), hex(k < 2 ? '#9aa0ab' : '#b4b9c2'), sat(0.55, 0.8));
+      kyna(x, [[x1 - sivu * pak * 0.42, y1], [x2 - sivu * pak * 0.42, y2]], Math.max(1, pak * 0.3), hex('#4b505c'), 0.55);
+      kyna(x, [[x1 + sivu * pak * 0.38, y1], [x2 + sivu * pak * 0.38, y2]], Math.max(1, pak * 0.28), hex('#e6e8ec'), 0.5);
+      if (pituus > 120) {                                  // a rusty diamond-shaped ring at the top
+        const rengas = [[x2 - 3, y2 - 40], [x2 + 16, y2 - 16], [x2 + 2, y2 + 4], [x2 - 16, y2 - 19], [x2 - 3, y2 - 40]];
+        for (let k = 0; k < 2; k++) kyna(x, rengas.map(([a, b]) => [a + gauss() * 0.6, b + gauss() * 0.6]), sat(2.2, 3.2), hex(k ? '#8a7563' : '#6d5848'), 0.75);
+      }
+    }
+    for (const [cx, cy, rx, ry] of POIJUT) {
+      const s = nayte(cx, cy), pohja = liitu(s.r, s.g, s.b, 0, 5);
+      for (let k = 0; k < 9; k++) {                        // reflection: the same color as horizontal strokes going downwards, fading
+        const yy = cy + ry * (1.1 + k * 0.42) + gauss() * 1.2, lev = rx * (0.9 - k * 0.07) * sat(0.7, 1.1);
+        pastelli(x, [[cx - lev, yy], [cx + gauss() * 2, yy + gauss() * 0.6], [cx + lev, yy]], Math.max(2, ry * 0.22), pohja, 0.5 * (1 - k / 9) * sat(0.6, 1), 3);
+      }
+      for (let k = 0; k < 2; k++) { x.fillStyle = rgba(pohja, 0.42); x.beginPath(); x.ellipse(cx + gauss() * rx * 0.03, cy + gauss() * ry * 0.03, rx * sat(0.88, 0.97), ry * sat(0.88, 0.97), 0, 0, 2 * Math.PI); x.fill(); }
+      const n = Math.round(40 + rx * ry * 0.16);
+      for (let k = 0; k < n; k++) {                        // body: short curved strokes following the shape of the ellipse, darker on the underside
+        const rr = 0.3 + Math.sqrt(rnd()) * 0.62, t0 = rnd() * 2 * Math.PI, dt = sat(0.4, 1.1), pts = [];
+        for (let j = 0; j <= 6; j++) { const t = t0 + dt * j / 6; pts.push([cx + Math.cos(t) * rx * rr, cy + Math.sin(t) * ry * rr]); }
+        const alas = Math.max(0, Math.sin(t0 + dt / 2)) * rr;
+        const v = liitu(s.r * (1 - 0.35 * alas), s.g * (1 - 0.35 * alas), s.b * (1 - 0.3 * alas), 0.25, 5);
+        pastelli(x, pts, Math.max(2, ry * 0.18), v, sat(0.55, 0.9), 3);
+      }
+      const ta = Math.atan2(ly - cy, (lx - cx) * 0.25);   // the lamp is high up: the light comes diagonally from above
+      for (let k = 0; k < 4; k++) {
+        const pts = []; for (let j = 0; j <= 8; j++) { const t = ta - 0.9 + 1.8 * j / 8; pts.push([cx + Math.cos(t) * rx * 0.72, cy + Math.sin(t) * ry * 0.72]); }
+        pastelli(x, pts, Math.max(1.6, ry * 0.14), hex(LIIDUT.poiju[6 + Math.floor(rnd() * 2)]), sat(0.25, 0.5), 2);
+      }
+      x.fillStyle = rgba(hex('#fffaf0'), 0.55); x.beginPath(); x.ellipse(cx + Math.cos(ta) * rx * 0.45, cy + Math.sin(ta) * ry * 0.5, Math.max(1, rx * 0.08), Math.max(0.8, ry * 0.07), 0, 0, 2 * Math.PI); x.fill();
+      kyna(x, [[cx - rx * 0.95, cy + ry * 0.82], [cx, cy + ry * 0.98], [cx + rx * 0.95, cy + ry * 0.82]], Math.max(1.4, ry * 0.08), hex('#2c2f1c'), 0.5);
+    }
+    painaKerros(ctx, K, 0.86, 0.14); tila('poijut'); }
+
+  // 8. gouache: points of light in the reflection and small warm lights on the shore
+  { const K = kerros(), x = K[1];
+    for (let n = 0; n < 1600; n++) {
+      const sx = rnd() * W, sy = 600 + rnd() * (H - 600), s = nayte(sx, sy);
+      if (s.alue !== 4 || rnd() > s.valo) continue;
+      x.fillStyle = rgba(hex(rnd() < 0.7 ? '#fff6e6' : '#ffe8b0'), sat(0.5, 0.95));
+      x.beginPath(); x.ellipse(sx, sy, sat(1.2, 3.5), sat(0.6, 1.3), 0, 0, 2 * Math.PI); x.fill();
+    }
+    for (let n = 0; n < 4000; n++) {
+      const sx = rnd() * W, sy = rnd() * 760, s = nayte(sx, sy);
+      if (s.alue !== 2 || lum(s) < 0.55 || s.r < s.b + 30) continue;
+      x.fillStyle = rgba(hex(rnd() < 0.5 ? '#ffe8b0' : '#f5dcae'), sat(0.4, 0.8)); x.beginPath(); x.arc(sx, sy, sat(1, 2.4), 0, 2 * Math.PI); x.fill();
+    }
+    painaKerros(ctx, K, 0.97, 0.05); tila('guassi'); }
+
+  tila('valmis');
+}
+piirra().catch(e => { document.title = 'virhe: ' + e; console.error(e); });
+</script>
+</body>
+</html>

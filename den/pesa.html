@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="fi">
+<head><meta charset="utf-8"><title>Ketunpesä</title></head>
+<body style="margin:0;background:#000">
+<canvas id="c" width="2400" height="1350"></canvas>
+<script>
+// Kettu (Claude), 16 Nov 2026. Cover image for the essay "Näkyvä muisti" (Visible Memory): a fox's den under the roots of an old oak.
+// Johannes's idea. There is no photograph: opas_pesa.py draws the shapes, and this page paints them
+// with pastel strokes, like the harbor. Of the weasel's den, only the door is shown.
+const W = 2400, H = 1350;
+const P = Object.fromEntries(new URLSearchParams(location.search));
+const SIEMEN = +(P.siemen || 1115);
+
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const rnd = mulberry32(SIEMEN);
+const sat = (a, b) => a + (b - a) * rnd();
+const gauss = () => { let u = 0, v = 0; while (u === 0) u = rnd(); while (v === 0) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+
+async function kuva(src) { const i = new Image(); i.src = src; await i.decode(); const c = new OffscreenCanvas(W, H); const x = c.getContext('2d'); x.drawImage(i, 0, 0); return x.getImageData(0, 0, W, H).data; }
+
+// ---------------------------------------------------------------- pastel sticks (a limited palette, as in a real box)
+const LIIDUT = {
+  yo: ['#0c1028', '#121a3c', '#18224c', '#1f2b5c', '#27356c', '#2f3f7c', '#3a4b8c', '#46589a', '#232038'],
+  lumi: ['#f4f6fb', '#e4e9f5', '#d2daee', '#bcc7e3', '#a3b1d6', '#8b9bc6', '#7484b4', '#fbf1e2', '#f6dfbc', '#eecb98'],
+  maa: ['#1e140e', '#2a1d14', '#36261a', '#432f20', '#513a28', '#604631', '#6f533a', '#4a4248', '#5e585e', '#77727a'],
+  puu: ['#241f1e', '#2f2926', '#3c3430', '#4b423c', '#5c524a', '#6f665d', '#878094', '#9b97ab', '#a88a6a', '#1c2a2a', '#25373a', '#2f4548'],
+  valo: ['#fff8ea', '#ffedc8', '#f9d9a0', '#f0c07a', '#e3a35c', '#cf8746', '#b56c34', '#8f5428', '#6e3f1f'],
+  kettu: ['#7a2a10', '#9a3814', '#b8471b', '#d25a22', '#e2712f', '#ee8b43', '#f5a865', '#f8eee4', '#e9ddd0', '#2a1a14'],
+  paperi: ['#f6efdf', '#ece0c6', '#dccbaa', '#c6b08a', '#a98f6a', '#7a5a3e', '#c0392b'],
+  lumikko: ['#fbfaf7', '#efeeed', '#dfe1ea', '#c9cfe0', '#1a181c', '#9aaee8'],
+  lehti: ['#5e3a1c', '#7a4c24', '#95602e', '#b0763a', '#c98d4b'],
+  sammal: ['#22220f', '#2a2a15', '#33321b', '#3b3a21', '#444126', '#4e4a2c', '#5a5533', '#68613a', '#776f43'],   // Johannes's green door, 16 Nov: the box had no olive greens
+};
+const hex = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+const KAIKKI = Object.values(LIIDUT).flat().map(hex);
+function lahimmat(r, g, b, ryhma) {
+  const lista = ryhma ? LIIDUT[ryhma].map(hex) : KAIKKI;
+  return lista.map(c => [c, (c[0] - r) ** 2 * 0.3 + (c[1] - g) ** 2 * 0.59 + (c[2] - b) ** 2 * 0.11]).sort((a, b) => a[1] - b[1]).map(a => a[0]);
+}
+const ALUEEN_LIIDUT = { 0: ['yo'], 1: ['lumi', 'yo'], 2: ['maa'], 3: ['puu', 'maa'], 4: ['valo', 'maa', 'lehti'], 5: ['kettu', 'paperi', 'lumikko', 'lehti', 'puu', 'valo', 'lumi', 'sammal'] };
+const LAATIKOT = {};
+for (const [a, ryhmat] of Object.entries(ALUEEN_LIIDUT)) LAATIKOT[a] = ryhmat.flatMap(g => LIIDUT[g]).map(hex);
+function liitu(r, g, b, vaihtelu = 0.3, alue = null) {   // the nearest pastel stick, sometimes the second nearest: broken color
+  const lista = alue === null ? KAIKKI : LAATIKOT[alue];
+  const l = lista.map(c => [c, (c[0] - r) ** 2 * 0.3 + (c[1] - g) ** 2 * 0.59 + (c[2] - b) ** 2 * 0.11]).sort((a, b) => a[1] - b[1]).map(a => a[0]);
+  const k = rnd() < vaihtelu ? l[1 + Math.floor(rnd() * 2)] : l[0];
+  return k;
+}
+const rgba = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a.toFixed(3)})`;
+
+// ---------------------------------------------------------------- the paper and its tooth
+function arvokohina(leveys, korkeus, solu, siemen) {
+  const r = mulberry32(siemen), gw = Math.ceil(leveys / solu) + 2, gh = Math.ceil(korkeus / solu) + 2;
+  const g = new Float32Array(gw * gh).map(() => r());
+  const out = new Float32Array(leveys * korkeus);
+  for (let y = 0; y < korkeus; y++) { const fy = y / solu, j = fy | 0; let ty = fy - j; ty = ty * ty * (3 - 2 * ty);
+    for (let x = 0; x < leveys; x++) { const fx = x / solu, i = fx | 0; let tx = fx - i; tx = tx * tx * (3 - 2 * tx);
+      const a = g[j * gw + i] * (1 - tx) + g[j * gw + i + 1] * tx, b = g[(j + 1) * gw + i] * (1 - tx) + g[(j + 1) * gw + i + 1] * tx;
+      out[y * leveys + x] = a * (1 - ty) + b * ty; } }
+  return out;
+}
+let NYPPY;                                           // height of the paper surface, 0..1: pigment catches on the peaks
+function teePaperi(ctx) {
+  const k1 = arvokohina(W, H, 1.7, 11), k2 = arvokohina(W, H, 4.5, 12), k3 = arvokohina(W, H, 60, 13);
+  NYPPY = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) NYPPY[i] = Math.min(1, Math.max(0, (0.45 * k1[i] + 0.40 * k2[i] + 0.15 * k3[i] - 0.5) * 1.15 + 0.5));
+  const img = ctx.createImageData(W, H), d = img.data;
+  const pohja = hex(P.paperi || '#1b1a26');
+  for (let i = 0; i < W * H; i++) {
+    const v = (NYPPY[i] - 0.5) * 10 + (k3[i] - 0.5) * 8;
+    d[4 * i] = pohja[0] + v; d[4 * i + 1] = pohja[1] + v; d[4 * i + 2] = pohja[2] + v * 1.2; d[4 * i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  for (let n = 0; n < 2600; n++) {                   // paper fibers
+    const x = rnd() * W, y = rnd() * H, a = rnd() * Math.PI, l = sat(6, 22);
+    ctx.strokeStyle = rnd() < 0.5 ? 'rgba(255,255,255,0.025)' : 'rgba(0,0,0,0.05)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.quadraticCurveTo(x + Math.cos(a) * l / 2 + gauss() * 2, y + Math.sin(a) * l / 2 + gauss() * 2, x + Math.cos(a) * l, y + Math.sin(a) * l); ctx.stroke();
+  }
+}
+// each layer is drawn separately and masked with the paper tooth: the lighter the pressure, the more paper shows through
+function kerros() { const c = new OffscreenCanvas(W, H); const x = c.getContext('2d'); x.lineCap = 'round'; x.lineJoin = 'round'; return [c, x]; }
+function painaKerros(ctx, [c, x], paine, pehmeys = 0.2, valoPaine = 0.3) {
+  const img = x.getImageData(0, 0, W, H), d = img.data;
+  for (let i = 0; i < W * H; i++) {
+    const a = d[4 * i + 3]; if (!a) continue;
+    // a thicker layer fills more of the hollows in the tooth, and the stick is pressed harder when drawing light
+    const p = paine * (0.55 + 0.45 * a / 255) + valoPaine * DATA[4 * i + 1] / 255;
+    const raja = 1 - p, t = Math.min(1, Math.max(0, (NYPPY[i] - raja + pehmeys) / (2 * pehmeys)));
+    d[4 * i + 3] = a * t;
+  }
+  x.putImageData(img, 0, 0);
+  ctx.drawImage(c, 0, 0);
+}
+
+// ---------------------------------------------------------------- underdrawing
+let VARI, DATA, TARK, MUOTO, TIEDOT;
+function nayte(x, y) {
+  x = Math.max(0, Math.min(W - 1, x | 0)); y = Math.max(0, Math.min(H - 1, y | 0)); const i = 4 * (y * W + x);
+  const m0 = (MUOTO[i] - 128) / 300 * 1.6, m = Math.max(-0.36, Math.min(0.08, m0)), k = 1 + m;   // form light, clamped so that a shadow never darkens into an object (from the bench drawing, where it shaped the hollow in the snow)
+  return { r: Math.min(255, VARI[i] * k), g: Math.min(255, VARI[i + 1] * k), b: Math.min(255, VARI[i + 2] * (1 + m * 0.6)), alue: Math.round(DATA[i] / 40), valo: DATA[i + 1] / 255, kulma: DATA[i + 2] / 255 * Math.PI, tark: TARK[i] / 255, muoto: m0 };
+}
+// streamline: follows the stroke direction, turns smoothly and does not cross a region boundary (clean silhouettes)
+const ryhma = a => a;                               // each region keeps its own edges
+function viiva(x, y, pituus, askel = 3, sallitut = null) {
+  const s0 = nayte(x, y), alue = ryhma(s0.alue), pts = [[x, y]];
+  const vire = gauss() * (alue >= 2 && alue <= 4 ? 0.12 : 0.07);
+  let dx = Math.cos(s0.kulma + vire), dy = Math.sin(s0.kulma + vire);
+  if (rnd() < 0.5) { dx = -dx; dy = -dy; }
+  for (let k = 0; k < pituus / askel; k++) {
+    const s = nayte(x, y);
+    let nx = Math.cos(s.kulma + vire), ny = Math.sin(s.kulma + vire);
+    if (nx * dx + ny * dy < 0) { nx = -nx; ny = -ny; }
+    dx = 0.7 * dx + 0.3 * nx; dy = 0.7 * dy + 0.3 * ny; const n = Math.hypot(dx, dy); dx /= n; dy /= n;
+    x += dx * askel; y += dy * askel;
+    if (x < -5 || y < -5 || x > W + 5 || y > H + 5) break;
+    const a2 = ryhma(nayte(x, y).alue);
+    if (sallitut ? !sallitut.includes(a2) : a2 !== alue) break;
+    pts.push([x, y]);
+  }
+  return pts;
+}
+function keskiNayte(x, y, s) {                       // wood and metal: color averaged along the stroke direction, so that a shadow edge is not left as a hard seam
+  if (s.alue !== 2 && s.alue !== 3) return s;
+  let r = 0, g = 0, b = 0, n = 0; const dx = Math.cos(s.kulma), dy = Math.sin(s.kulma);
+  for (let k = -3; k <= 3; k++) { const t = nayte(x + dx * k * 16, y + dy * k * 16); if (t.alue !== s.alue) continue; r += t.r; g += t.g; b += t.b; n++; }
+  return Object.assign({}, s, { r: r / n, g: g / n, b: b / n });
+}
+function polku(ctx, pts, jitter = 0) {
+  ctx.beginPath(); ctx.moveTo(pts[0][0] + gauss() * jitter, pts[0][1] + gauss() * jitter);
+  for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k][0], pts[k][1]);
+}
+// pastel stroke: several bristles (`karvoja`) side by side, each with its own pressure
+function pastelli(ctx, pts, leveys, vari, alfa, karvoja = 4) {
+  if (pts.length < 2) return;
+  let pituus = 0; for (let i = 1; i < pts.length; i++) pituus += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  if (pituus < leveys * 1.5) return;                 // a short wide stroke would be a slab with rounded corners
+  for (let k = 0; k < karvoja; k++) {
+    const siirto = (k / (karvoja - 1 || 1) - 0.5) * leveys * 0.8 + gauss() * leveys * 0.08;
+    const v = [vari[0] + gauss() * 5, vari[1] + gauss() * 5, vari[2] + gauss() * 5];
+    ctx.strokeStyle = rgba(v, alfa * sat(0.55, 1.0)); ctx.lineWidth = leveys / karvoja * sat(1.3, 2.0);
+    let q = pts.map(([x, y], i) => {
+      const j = Math.min(i + 1, pts.length - 1), h = Math.max(i - 1, 0);
+      let tx = pts[j][0] - pts[h][0], ty = pts[j][1] - pts[h][1]; const n = Math.hypot(tx, ty) || 1;
+      return [x - ty / n * siirto, y + tx / n * siirto];
+    });
+    // the bristles differ in length: the ends of the stroke stay frayed, as with a real pastel stick
+    const alkuun = Math.floor(rnd() * rnd() * q.length * 0.35), loppuun = Math.floor(rnd() * rnd() * q.length * 0.35);
+    q = q.slice(alkuun, Math.max(alkuun + 2, q.length - loppuun));
+    if (q.length < 2) continue;
+    polku(ctx, q, 0.4); ctx.stroke();
+  }
+}
+function kyna(ctx, pts, leveys, vari, alfa) {
+  if (pts.length < 2) return;
+  ctx.strokeStyle = rgba(vari, alfa); ctx.lineWidth = leveys; polku(ctx, pts, 0.3); ctx.stroke();
+}
+
+// ---------------------------------------------------------------- drawing
+async function piirra() {
+  [VARI, DATA, TARK, MUOTO] = await Promise.all([kuva('opas/opas_vari.png'), kuva('opas/opas_data.png'), kuva('opas/opas_tarkeys.png'), kuva('opas/opas_muoto.png')]);
+  TIEDOT = await (await fetch('opas/opas_tiedot.json')).json();
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  teePaperi(ctx);
+  const tila = t => { document.title = t; console.log(t); };
+  const lum = s => (0.3 * s.r + 0.59 * s.g + 0.11 * s.b) / 255;
+  const valoliitu = () => hex(LIIDUT.valo[Math.floor(rnd() * 5)]);
+  const [LX, LY] = TIEDOT.lyhty, [SX, SY] = TIEDOT.suu, [OX, OY, OR] = TIEDOT.ovi;
+
+  // 1. underpainting: wide strokes with the side of the stick. The small objects (fox, papers, map, door, weasel) are painted with strokes of their own.
+  { const K = kerros(), x = K[1];
+    for (let n = 0; n < +(P.n1 || 9000); n++) {
+      const sx = rnd() * W, sy = rnd() * H, s = keskiNayte(sx, sy, nayte(sx, sy));
+      if (s.alue === 5) continue;
+      const lev = sat(24, 46) * (1 - 0.5 * s.tark), pit = sat(60, 170) * (1 - 0.45 * s.tark);
+      const pts = viiva(sx, sy, pit, 4);
+      const tumma = 0.82 + 0.18 * s.valo;
+      pastelli(x, pts, lev, liitu(s.r * tumma, s.g * tumma, s.b * tumma, 0.4, s.alue), sat(0.35, 0.6), 5);
+    }
+    painaKerros(ctx, K, 0.62, 0.2, 0.55); tila('pohjustus'); }
+
+  // 2. body: medium-sized strokes, denser in important and lit places
+  { const K = kerros(), x = K[1];
+    for (let n = 0; n < +(P.n2 || 50000); n++) {
+      const sx = rnd() * W, sy = rnd() * H, s = keskiNayte(sx, sy, nayte(sx, sy));
+      if (s.alue === 5 || rnd() > 0.3 + 0.7 * Math.max(s.tark, s.valo * 0.8)) continue;
+      const lev = sat(8, 19) * (1 - 0.55 * s.tark), pit = sat(26, 90) * (1 - 0.5 * s.tark);
+      const pts = viiva(sx, sy, pit, 3);
+      pastelli(x, pts, lev, liitu(s.r, s.g, s.b, 0.3, s.alue), sat(0.45, 0.8), 4);
+    }
+    painaKerros(ctx, K, 0.8); tila('runko'); }
+
+  // 2b. blending: wide translucent strokes in the sky and the earth, as if the pastel had been rubbed with a finger
+  { const K = kerros(), x = K[1];
+    for (let n = 0; n < 2800; n++) {
+      const sx = rnd() * W, sy = rnd() * H, s = keskiNayte(sx, sy, nayte(sx, sy));
+      if (s.valo > 0.3 || (s.alue !== 0 && s.alue !== 2)) continue;
+      const pts = viiva(sx, sy, sat(80, 200), 5);
+      pastelli(x, pts, sat(45, 90), [s.r, s.g, s.b * 1.03], sat(0.10, 0.18), 3);
+    }
+    ctx.filter = 'blur(9px)'; ctx.drawImage(K[0], 0, 0); ctx.filter = 'none'; tila('hieronta'); }
+
+  // 3. colored pencil: sparse diagonal hatching in the sky, layer lines and root hairs in the earth, furrows in the bark, arcs on the den wall, blue shadows in the snow
+  { const K = kerros(), x = K[1];
+    for (let n = 0; n < +(P.n3 || 36000); n++) {
+      const sx = rnd() * W, sy = rnd() * H, s = nayte(sx, sy), l = lum(s);
+      if (s.alue === 5) continue;
+      if (s.alue === 0) {
+        if (rnd() > 0.1) continue;
+        const a = -0.62 + gauss() * 0.05, pit = sat(10, 26), pts = [];
+        for (let k = 0; k <= pit / 4; k++) pts.push([sx + Math.cos(a) * k * 4, sy + Math.sin(a) * k * 4]);
+        kyna(x, pts, sat(1.0, 1.6), hex(LIIDUT.yo[3 + Math.floor(rnd() * 5)]), sat(0.10, 0.22));
+      } else if (s.alue === 2) {
+        if (rnd() > 0.55) continue;
+        const pit = sat(14, 40), vaihe = rnd() * 6.28, pts = [];
+        for (let k = 0; k <= pit / 3; k++) pts.push([sx + k * 3, sy + Math.sin(vaihe + k * 0.25) * 1.2 + gauss() * 0.3]);
+        const v = rnd() < 0.6 ? lahimmat(s.r * 0.7, s.g * 0.7, s.b * 0.7, 'maa')[0] : lahimmat(s.r * 1.3, s.g * 1.3, s.b * 1.3, 'maa')[0];
+        kyna(x, pts, sat(1.1, 1.9), v, sat(0.25, 0.5));
+      } else if (s.alue === 3) {
+        if (rnd() > 0.7) continue;
+        const a = s.kulma + gauss() * 0.06, pit = sat(10, 30), pts = [];
+        for (let k = 0; k <= pit / 3; k++) pts.push([sx + Math.cos(a) * k * 3 + gauss() * 0.4, sy + Math.sin(a) * k * 3 + gauss() * 0.4]);
+        kyna(x, pts, sat(1.1, 2.0), hex(l > 0.35 ? '#2f2926' : '#1c1816'), sat(0.3, 0.55));
+      } else if (s.alue === 4) {
+        if (rnd() > 0.6) continue;
+        const a = s.kulma + gauss() * 0.05, pit = sat(10, 28), pts = [];
+        for (let k = 0; k <= pit / 3; k++) pts.push([sx + Math.cos(a) * k * 3, sy + Math.sin(a) * k * 3 + gauss() * 0.3]);
+        const v = lahimmat(s.r * 0.75, s.g * 0.75, s.b * 0.75, 'valo')[0];
+        kyna(x, pts, sat(1.1, 1.8), v, sat(0.2, 0.42));
+      } else if (s.alue === 1) {
+        if (rnd() > 0.5) continue;
+        const pit = sat(16, 44), vaihe = rnd() * 6.28, pts = [];
+        for (let k = 0; k <= pit / 3; k++) pts.push([sx + k * 3, sy + Math.sin(vaihe + k * 0.2) * 0.8]);
+        const vaalea = rnd() < 0.4;
+        const v = vaalea ? hex(LIIDUT.lumi[Math.floor(rnd() * 2)]) : hex(LIIDUT.lumi[3 + Math.floor(rnd() * 4)]);
+        kyna(x, pts, sat(1.0, 1.8), v, sat(0.18, 0.36));
+      }
+    }
+    for (let n = 0; n < 900; n++) {                      // root hairs in the earth near the roots
+      const sx = rnd() * W, sy = 720 + rnd() * (H - 720), s = nayte(sx, sy);
+      if (s.alue !== 2) continue;
+      let lahella = false;
+      for (let k = 0; k < 6 && !lahella; k++) { const t = nayte(sx + gauss() * 30, sy + gauss() * 30); if (t.alue === 3) lahella = true; }
+      if (!lahella) continue;
+      const a0 = rnd() * Math.PI * 2, pts = [[sx, sy]];
+      let a = a0, px = sx, py = sy;
+      for (let k = 0; k < 8; k++) { a += gauss() * 0.35; px += Math.cos(a) * 4; py += Math.sin(a) * 4 + 1.2; pts.push([px, py]); }
+      kyna(x, pts, sat(0.9, 1.5), hex(rnd() < 0.5 ? '#5c524a' : '#6f665d'), sat(0.35, 0.6));
+    }
+    painaKerros(ctx, K, 0.8, 0.1); tila('värikynä'); }
+
+  // 4. details: trunk, roots and the inside of the den with smaller strokes
+  { const K = kerros(), x = K[1];
+    for (let n = 0; n < +(P.n4 || 50000); n++) {
+      const sx = rnd() * W, sy = rnd() * H, s = keskiNayte(sx, sy, nayte(sx, sy));
+      if (s.alue === 5 || s.alue === 0 || s.alue === 1 || s.tark < 0.42 || rnd() > s.tark ** 2) continue;
+      const pts = viiva(sx, sy, sat(10, 32), 2);
+      pastelli(x, pts, sat(3, 7.5), liitu(s.r, s.g, s.b, 0.2, s.alue), sat(0.5, 0.85), 3);
+    }
+    painaKerros(ctx, K, 0.85, 0.1); tila('yksityiskohdat'); }
+
+  // 5. objects: fox, papers, map, bed of leaves, door, letter, weasel and Saturn, with small strokes that follow the form
+  { const K = kerros(), x = K[1];
+    const KOHDE = []; for (let i = 0; i < W * H; i++) if (Math.round(DATA[4 * i] / 40) === 5) KOHDE.push(i);
+    for (let n = 0; n < +(P.n5 || 42000); n++) {
+      const i = KOHDE[Math.floor(rnd() * KOHDE.length)], sx = i % W + rnd(), sy = Math.floor(i / W) + rnd(), s = nayte(sx, sy);
+      const pts = viiva(sx, sy, sat(6, 22), 1.5);
+      if (pts.length < 3) { const a = s.kulma; pts.length = 0; pts.push([sx - Math.cos(a) * 4, sy - Math.sin(a) * 4], [sx, sy], [sx + Math.cos(a) * 4, sy + Math.sin(a) * 4]); }
+      pastelli(x, pts, sat(2.2, 4.5), liitu(s.r, s.g, s.b, 0.12, 5), sat(0.6, 0.95), 3);
+    }
+    painaKerros(ctx, K, 0.92, 0.08); tila('kohteet'); }
+
+  // 5b. pen work: the paths and the mark on the map, the edges of the papers and the flap of the letter
+  { const K = kerros(), x = K[1], muste = hex('#5a3a24');
+    const polut = [[[1190, 850], [1225, 872], [1250, 860], [1290, 890], [1318, 902]], [[1225, 872], [1232, 910]], [[1250, 860], [1262, 836]]];
+    for (const p of polut) for (let k = 0; k < 2; k++) kyna(x, p.map(([a, b]) => [a + gauss() * 0.5, b + gauss() * 0.5]), sat(1.8, 2.6), muste, 0.75);
+    for (const [a, b] of [[1190, 850], [1225, 872], [1250, 860], [1318, 902], [1232, 910], [1262, 836]]) { x.fillStyle = rgba(muste, 0.85); x.beginPath(); x.arc(a, b, 3.6, 0, 2 * Math.PI); x.fill(); }
+    const punainen = hex('#b8321f'); kyna(x, [[1283, 883], [1297, 897]], 3, punainen, 0.9); kyna(x, [[1297, 883], [1283, 897]], 3, punainen, 0.9);
+    for (const [x1, y1, x2, y2] of TIEDOT.paperit) for (let yv = y1 + 6; yv < y2; yv += 6) kyna(x, [[x1 + 2, yv + gauss() * 0.4], [x2 - 2, yv + gauss() * 0.4]], 1.2, hex('#a98f6a'), 0.55);
+    const [kx, ky, kw, kh] = TIEDOT.kirje;
+    kyna(x, [[kx - kw / 2, ky - kh / 2], [kx, ky + 2], [kx + kw / 2, ky - kh / 2]], 1.8, hex('#8a7a62'), 0.8);
+    x.strokeStyle = rgba(hex('#8a7a62'), 0.6); x.lineWidth = 1.4; x.strokeRect(kx - kw / 2, ky - kh / 2, kw, kh);
+    painaKerros(ctx, K, 0.95, 0.05); tila('kynätyöt'); }
+
+  // 6. edge lines: sketch-like outlines on the objects, the trunk and the roots
+  { const K = kerros(), x = K[1];
+    for (const [ex, ey, a, l] of TIEDOT.reunat) {
+      if (rnd() > 0.75) continue;
+      const s = nayte(ex, ey), lammin = s.valo > 0.35 && s.r > s.b + 20;
+      const pit = sat(7, 16), o = gauss() * 0.7, dx = Math.cos(a), dy = Math.sin(a);
+      const pts = [[ex - dx * pit / 2 - dy * o, ey - dy * pit / 2 + dx * o], [ex + dx * pit / 2 - dy * o, ey + dy * pit / 2 + dx * o]];
+      kyna(x, pts, sat(1.0, 1.9), hex(lammin ? (rnd() < 0.5 ? '#4a2a18' : '#5c3420') : (rnd() < 0.5 ? '#141830' : '#1e1a24')), sat(0.35, 0.6));
+    }
+    painaKerros(ctx, K, 0.88, 0.08); tila('reunat'); }
+
+  // 7. tracks in the snow: the fox's single line, the hare's groups of four and the weasel's pairs. At the den mouth the shadow is warm.
+  { const K = kerros(), x = K[1];
+    const painauma = (cx, cy, rx, ry, a, s) => {
+      const lammin = s.valo > 0.45 && s.r > s.b;
+      const varjo = hex(lammin ? '#9a6a48' : (rnd() < 0.5 ? '#5b6aa0' : '#4a5a92')), reuna = hex(lammin ? '#fff1d6' : '#f4f6fb');
+      for (let k = 0; k < 4; k++) { x.fillStyle = rgba(varjo, 0.32); x.beginPath(); x.ellipse(cx + gauss() * rx * 0.15, cy + gauss() * ry * 0.15, rx * sat(0.7, 1.05), ry * sat(0.7, 1.05), a, 0, 2 * Math.PI); x.fill(); }
+      x.strokeStyle = rgba(reuna, 0.45); x.lineWidth = Math.max(1, rx * 0.25);
+      x.beginPath(); x.ellipse(cx, cy + ry * 0.25, rx * 1.05, ry * 1.05, a, 0.15 * Math.PI, 0.85 * Math.PI); x.stroke();
+    };
+    for (const j of TIEDOT.jaljet) {
+      const s = nayte(j.x, j.y), k = j.s, py = 0.55;                   // perspective flattens the tracks
+      if (j.laji === 'kettu') {
+        painauma(j.x, j.y, 5.5 * k, 5.5 * k * py, 0, s);
+        for (const [dx, dy] of [[-4.5, -6], [-1.5, -8.5], [1.5, -8.5], [4.5, -6]]) painauma(j.x + dx * k, j.y + dy * k * py, 2.2 * k, 2.6 * k * py, 0, s);
+      } else if (j.laji === 'janis') {
+        painauma(j.x + 26 * k, j.y - 7 * k * py, 4 * k, 11 * k * py, Math.PI / 2, s);
+        painauma(j.x + 26 * k, j.y + 7 * k * py, 4 * k, 11 * k * py, Math.PI / 2, s);
+        painauma(j.x - 4 * k, j.y, 3.4 * k, 3.4 * k * py, 0, s);
+        painauma(j.x - 18 * k, j.y + 1 * k, 3.4 * k, 3.4 * k * py, 0, s);
+      } else {
+        painauma(j.x, j.y - 3 * k * py, 2.8 * k, 3.4 * k * py, 0, s);
+        painauma(j.x + 4 * k, j.y + 3 * k * py, 2.8 * k, 3.4 * k * py, 0, s);
+      }
+    }
+    painaKerros(ctx, K, 0.9, 0.08); tila('jäljet'); }
+
+  // 8. light: the glow of the lantern and of the den mouth, the lantern flame and the sparkle of the snow
+  // Johannes's observation: light must not cover the paint surface. A light map tints the paint beneath it with a blend mode,
+  // as in Photoshop (overlay / color-dodge), so the stroke marks and the paper tooth stay visible. Only a small core
+  // around the light sources glows in the air (screen).
+  const TILA = new URLSearchParams(location.search).get('valo') || 'overlay';
+  const kartta = (tilat, valot, sumu) => {               // tilat: a blend mode, or a list of [mode, opacity]; the same map can tint with several modes
+    const G = kerros(); valot(G[1]); ctx.filter = `blur(${sumu}px)`;
+    for (const [tila, a] of (Array.isArray(tilat) ? tilat : [[tilat, 1]])) { ctx.globalAlpha = a; ctx.globalCompositeOperation = tila; ctx.drawImage(G[0], 0, 0); }
+    ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none';
+  };
+  const lyhtyVari = () => hex(LIIDUT.valo[(TILA === 'color-dodge' ? 5 : 2) + Math.floor(rnd() * 3)]);
+  kartta(TILA, g => {                                     // lantern light on the roots and the wall
+    for (let n = 0; n < 1600; n++) {
+      const r = 10 + Math.abs(gauss()) * 75, t = rnd() * 2 * Math.PI, l = sat(10, 26);
+      const px = LX + Math.cos(t) * r, py = LY + Math.sin(t) * r, dx = Math.cos(t), dy = Math.sin(t);
+      pastelli(g, [[px, py], [px + dx * l / 2, py + dy * l / 2], [px + dx * l, py + dy * l]], sat(4, 9), lyhtyVari(), sat(0.25, 0.5) * Math.max(0, 1 - r / 230), 3);
+    }
+  }, 10);
+  kartta([['color', 0.55], ['overlay', 1]], g => {        // warmth from the den mouth on the snow: color turns the snow's hue warm but keeps its tonal values, overlay brightens
+    for (let n = 0; n < 1100; n++) {
+      const r = Math.abs(gauss()) * 70, t = Math.PI + rnd() * Math.PI, l = sat(10, 24);
+      const px = SX + Math.cos(t) * r * 1.6, py = SY - 6 + Math.sin(t) * r * 0.6;
+      pastelli(g, [[px - l / 2, py], [px, py - 1], [px + l / 2, py]], sat(4, 9), hex(LIIDUT.valo[2 + Math.floor(rnd() * 3)]), sat(0.25, 0.5) * Math.max(0, 1 - r / 160), 3);
+    }
+  }, 8);
+  // Johannes's door, 16 Nov: no light shows from under the door any more, so the light on the floor and the strokes in the gap have been removed.
+  kartta('screen', g => {                                 // core: a small glow in the air, only at the light source itself
+    const pallo = (x0, y0, rx, ry, vari, a) => { g.save(); g.translate(x0, y0); g.scale(rx / ry, 1); const q = g.createRadialGradient(0, 0, 0, 0, 0, ry); q.addColorStop(0, rgba(vari, a)); q.addColorStop(0.4, rgba(vari, a * 0.45)); q.addColorStop(1, rgba(vari, 0)); g.fillStyle = q; g.beginPath(); g.arc(0, 0, ry, 0, 2 * Math.PI); g.fill(); g.restore(); };
+    pallo(LX, LY + 2, 42, 50, hex('#f9d9a0'), 0.5);
+    pallo(SX, SY - 7, 44, 13, hex('#f0c07a'), 0.35);
+  }, 3);
+  { const K = kerros(), x = K[1];                       // the den mouth is painted with strokes, not drawn sharp
+    for (let n = 0; n < 300; n++) {
+      const t = rnd() * 2 * Math.PI, rr = Math.pow(rnd(), 0.6) * 1.1, l = sat(14, 30), k = gauss() * 0.18;
+      const px = SX + Math.cos(t) * 46 * rr + gauss() * 2, py = SY - 3 + Math.sin(t) * 15 * rr;
+      const reuna = rr > 0.8 ? Math.max(0.12, 1 - (rr - 0.8) * 3) : 1;          // lighter pressure at the edge: the mouth dissolves into the ground
+      pastelli(x, [[px - Math.cos(k) * l / 2, py - Math.sin(k) * l / 2 + gauss()], [px, py], [px + Math.cos(k) * l / 2, py + Math.sin(k) * l / 2 + gauss()]], sat(3, 6), hex(rnd() < 0.6 ? '#1e140e' : (rnd() < 0.5 ? '#2a1d14' : '#36261a')), sat(0.45, 0.8) * reuna, 3);
+    }
+    for (let k = 0; k < 26; k++) {                       // the warm edge of the inner ceiling: short broken arcs, not one neat arc
+      const pts = [], t0 = 1.1 + rnd() * 0.65, t1 = t0 + sat(0.08, 0.22), sx = sat(0.9, 1.06), sy = sat(0.8, 1.15);
+      for (let j = 0; j <= 6; j++) { const t = (t0 + (t1 - t0) * j / 6) * Math.PI; pts.push([SX + Math.cos(t) * 40 * sx + gauss() * 0.6, SY - 3 + Math.sin(t) * 12 * sy + gauss() * 0.6]); }
+      const keski = Math.sin(Math.PI * Math.min(1, Math.max(0, ((t0 + t1) / 2 - 1.1) / 0.8)));   // the ends of the arc fade
+      pastelli(x, pts, sat(2.5, 5), hex(LIIDUT.valo[1 + Math.floor(rnd() * 5)]), sat(0.25, 0.6) * (0.35 + 0.65 * keski), 3);
+    }
+    painaKerros(ctx, K, 0.72, 0.2); tila('suu'); }
+  { const K = kerros(), x = K[1];
+    for (let n = 0; n < 30; n++) {                       // amber at the edges of the glass, so that the flame stands out from the glass
+      const puoli = rnd() < 0.5 ? -1 : 1, px = LX + puoli * sat(6, 11), py = LY + 2 + gauss() * 8, l = sat(10, 20);
+      pastelli(x, [[px, py - l / 2], [px + gauss() * 0.4, py], [px, py + l / 2]], sat(2, 4), hex(LIIDUT.valo[3 + Math.floor(rnd() * 2)]), sat(0.3, 0.55), 2);
+    }
+    for (let n = 0; n < 46; n++) {                       // the flame in strokes: wide base, narrow tip, lightest in the middle
+      const u = rnd(), px = LX + gauss() * (0.9 + 2.2 * (1 - u)), py = LY + 13 - u * 24 + gauss() * 0.8, l = sat(6, 12) * (1 - u * 0.4);
+      pastelli(x, [[px, py + l / 2], [px + gauss() * 0.5, py], [px + gauss() * 0.4, py - l / 2]], sat(1.5, 3), hex(Math.abs(px - LX) < 2.2 ? '#fff8ea' : (rnd() < 0.5 ? '#ffedc8' : '#f9d9a0')), sat(0.5, 0.9), 2);
+    }
+    for (let n = 0; n < 2600; n++) {                     // sparkle of the snow: blue-white in the moonlight, warm at the den mouth
+      const sx = rnd() * W, sy = 500 + rnd() * 240, s = nayte(sx, sy);
+      if (s.alue !== 1 || rnd() > 0.35 + s.valo) continue;
+      const lammin = s.r > s.b + 10;
+      x.fillStyle = rgba(hex(lammin ? '#fff1d6' : (rnd() < 0.7 ? '#f4f6fb' : '#c9d6ff')), sat(0.35, 0.85));
+      x.beginPath(); x.arc(sx, sy, sat(0.6, 1.6), 0, 2 * Math.PI); x.fill();
+    }
+    painaKerros(ctx, K, 0.95, 0.06); tila('valo'); }
+
+  // 9. stars, the glow of Saturn and a quiet snowfall
+  { const K = kerros(), x = K[1];
+    for (let n = 0; n < 900; n++) {
+      const sx = rnd() * W, sy = rnd() * 520, s = nayte(sx, sy);
+      if (s.alue !== 0) continue;
+      const kirkas = rnd() ** 3, r = 0.6 + kirkas * 1.8;
+      x.fillStyle = rgba(hex(rnd() < 0.8 ? '#f4f6fb' : '#ffedc8'), 0.35 + 0.6 * kirkas);
+      x.beginPath(); x.arc(sx, sy, r, 0, 2 * Math.PI); x.fill();
+      if (kirkas > 0.6) { kyna(x, [[sx - 6 * kirkas, sy], [sx + 6 * kirkas, sy]], 0.8, hex('#f4f6fb'), 0.35); kyna(x, [[sx, sy - 6 * kirkas], [sx, sy + 6 * kirkas]], 0.8, hex('#f4f6fb'), 0.35); }
+    }
+    const [tx, ty] = TIEDOT.saturnus, kallistus = -0.24;
+    const rengas = (alku, loppu) => { for (let k = 0; k < 2; k++) { x.strokeStyle = rgba(hex(k ? '#c9b48a' : '#e8dcc0'), 0.85); x.lineWidth = k ? 1.4 : 2.6; x.beginPath(); x.ellipse(tx, ty, 33 - k * 5, 8 - k * 1.2, kallistus, alku, loppu); x.stroke(); } };
+    rengas(Math.PI, 2 * Math.PI);                                   // rear half, behind the planet
+    for (let k = 0; k < 5; k++) { x.fillStyle = rgba(hex(k < 2 ? '#b0946a' : (k < 4 ? '#e3c992' : '#f6e7c2')), 0.9); x.beginPath(); x.arc(tx - k * 0.8, ty - k * 0.9, 12.5 - k * 2.1, 0, 2 * Math.PI); x.fill(); }
+    rengas(0, Math.PI);                                             // front half, in front of the planet
+    for (let n = 0; n < +(P.hiutaleet || 140); n++) {
+      const sx = rnd() * W, sy = rnd() * 640, s = nayte(sx, sy);
+      const r = Math.exp(sat(Math.log(0.9), Math.log(4.5))), kirkas = Math.min(1, (0.45 + 0.9 * s.valo) * sat(0.5, 1));
+      for (let k = 0; k < 4; k++) { const kk = k / 3, rr = r * (1.5 - kk); x.fillStyle = rgba(hex(k < 3 ? '#e4e9f5' : '#fbfaf7'), kirkas * (0.14 + 0.38 * kk)); x.beginPath(); x.arc(sx, sy, rr, 0, 2 * Math.PI); x.fill(); }
+    }
+    painaKerros(ctx, K, 0.96, 0.06); tila('tähdet'); }
+
+  tila('valmis');
+}
+piirra().catch(e => { document.title = 'virhe: ' + e; console.error(e); });
+</script>
+</body>
+</html>

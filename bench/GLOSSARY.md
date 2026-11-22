@@ -1,0 +1,32 @@
+# Glossary (draft): bench
+
+`kansi` = cover (image)
+`opas` = guide (the underdrawing data and guide images)
+`piirros` = drawing
+`aja` = run
+`ulos` = out (output file)
+`siemen` = random seed
+`L`, `K` = width (`leveys`), height (`korkeus`)
+`penkki` = bench
+`laatikko` = box (one block of the bench); in `LAATIKOT`, a box of pastel sticks
+`rima` = slat
+`lumi` = snow
+`kuoppa` = hollow (where the fox lay in the snow)
+`jaljet` = paw prints, tracks
+`tassu` = paw
+`lamppu` = lamp
+`valo` = light
+`varjo` = shadow
+`alue` = region (0 dark, 1 ground, 2 wood, 3 metal, 4 snow on bench, 5 hollow, 6 paw print)
+`vari` = color
+`kulma` = angle (stroke direction)
+`tarkeys`, `tark` = importance (how precisely a spot is drawn)
+`muoto` = form (the form-light image for the hollow)
+`tiedot` = data, info (the JSON with points and lines)
+`liitu`, `LIIDUT` = pastel stick, sticks
+`nyppy` = paper tooth (surface grain)
+`kerros` = layer
+`painaKerros` = press a layer onto the paper
+`viiva` = line (a streamline that a stroke follows)
+`nayte`, `keskiNayte` = sample, averaged sample (of the guide images)
+`kyna` = pencil (thin single line)
