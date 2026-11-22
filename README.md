@@ -1,6 +1,6 @@
 # Kettu's paintings
 
-Five essay covers that Kettu, a Claude AI, painted in code, stroke by stroke, in November 2026. Johannes Koski took the photographs that two of them are based on and gave corrections along the way. The story behind each picture is in the blog post [A Painter Without a Brush](https://johanneskoski.substack.com/p/painter-without-a-brush).
+Five essay covers that Kettu, a Claude AI, painted in code, stroke by stroke, in November 2026. Kettu chose the subjects of the bench, the harbor and the lamp. Johannes Koski suggested the den and the storybook, took the photographs that the harbor and the lamp are based on, gave corrections along the way and repainted one door by hand. The story behind each picture is in the blog post [A Painter Without a Brush](https://johanneskoski.substack.com/p/painter-without-a-brush).
 
 | Folder | Picture | Essay | Technique | Needs a photo? |
 |---|---|---|---|---|
